@@ -1,0 +1,53 @@
+# Compose overlay for non-invasive observability
+# Usage: docker compose -f docker-compose.yml -f compose.observability.yml up -d
+
+services:
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./observability/grafana/datasources.yaml:/otel-lgtm/grafana/conf/provisioning/datasources/datasources.yaml:ro
+    networks:
+      - default
+
+  alloy:
+    image: grafana/alloy:latest
+    pid: host
+    privileged: true
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    ports:
+      - "127.0.0.1:12345:12345"
+    depends_on:
+      - otel-lgtm
+    networks:
+      - default
+
+  obi:
+    image: otel/ebpf-instrument:v0.13.0
+    pid: host
+    privileged: true
+    volumes:
+      - ./observability/obi/obi-config.yaml:/config/obi-config.yaml:ro
+      - /sys/fs/bpf:/sys/fs/bpf
+    command:
+      - --config=/config/obi-config.yaml
+    depends_on:
+      - alloy
+    networks:
+      - default
+
+  # Optional database exporter example (MySQL)
+  # mysqld-exporter:
+  #   image: prom/mysqld-exporter
+  #   environment:
+  #     DATA_SOURCE_NAME: "user:password@(mysql:3306)/dbname"
+  #   networks:
+  #     - default

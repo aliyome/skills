@@ -1,0 +1,111 @@
+// Grafana Alloy pipeline configuration
+// Routes OTLP traces & metrics to otel-lgtm, collects container logs with trace correlation,
+// and samples eBPF profiles for Pyroscope.
+
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    metrics = [otelcol.exporter.otlp.lgtm.input]
+    logs    = [otelcol.exporter.otlp.lgtm.input]
+    traces  = [otelcol.exporter.otlp.lgtm.input]
+  }
+}
+
+otelcol.exporter.otlp "lgtm" {
+  client {
+    endpoint = "otel-lgtm:4317"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// Scrape database exporter if present
+// prometheus.scrape "db_exporter" {
+//   targets = [
+//     {"__address__" = "mysqld-exporter:9104"},
+//   ]
+//   scrape_interval = "15s"
+//   forward_to      = [otelcol.receiver.prometheus.default.receiver]
+// }
+
+otelcol.receiver.prometheus "default" {
+  output {
+    metrics = [otelcol.exporter.otlp.lgtm.input]
+  }
+}
+
+// Discover docker containers
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service_name"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "^/(.*)$"
+    target_label  = "container"
+  }
+}
+
+// Collect container stdout/stderr
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.containers.receiver]
+}
+
+// Extract trace_id and span_id into structured metadata for Tempo-Loki drill-down
+loki.process "containers" {
+  forward_to = [loki.write.lgtm.receiver]
+
+  stage.regex {
+    expression = "(trace_id|traceId)=(?P<trace_id>[0-9a-f]{32})\\s+(span_id|spanId)=(?P<span_id>[0-9a-f]{16})"
+  }
+
+  stage.structured_metadata {
+    values = {
+      trace_id = "",
+      span_id  = "",
+    }
+  }
+}
+
+loki.write "lgtm" {
+  endpoint {
+    url = "http://otel-lgtm:3100/loki/api/v1/push"
+  }
+}
+
+// eBPF continuous profiling
+pyroscope.ebpf "containers" {
+  targets          = discovery.relabel.containers.output
+  forward_to       = [pyroscope.write.lgtm.receiver]
+  collect_interval = "15s"
+}
+
+pyroscope.write "lgtm" {
+  endpoint {
+    url = "http://otel-lgtm:4040"
+  }
+}

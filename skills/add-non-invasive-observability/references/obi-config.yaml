@@ -1,0 +1,27 @@
+# OpenTelemetry eBPF auto-instrumentation configuration
+otel_metrics_export:
+  endpoint: http://alloy:4318
+otel_traces_export:
+  endpoint: http://alloy:4318
+
+# Target services to auto-instrument via eBPF
+discovery:
+  instrument:
+    # Change port to match target application's internal listening port
+    - open_ports: 8080
+
+# Inject trace_id and span_id into application log output
+ebpf:
+  log_enricher:
+    services:
+      - service:
+          - open_ports: 8080
+
+# Capture detailed attributes (e.g. database query text)
+attributes:
+  select:
+    traces:
+      include:
+        - db.query.text
+        - http.route
+        - url.path

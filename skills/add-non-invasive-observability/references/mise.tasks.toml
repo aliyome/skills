@@ -1,0 +1,30 @@
+# Snippet to merge into mise.toml (or .mise.toml)
+# Adjust COMPOSE_BASE if your main compose file has a custom name or path.
+
+[env]
+COMPOSE_BASE = "docker-compose.yml"
+COMPOSE_OBS = "compose.observability.yml"
+
+[tasks."obs:up"]
+description = "Start base services with observability overlay"
+run = "docker compose -f $COMPOSE_BASE -f $COMPOSE_OBS up -d"
+
+[tasks."obs:down"]
+description = "Stop all services including observability overlay"
+run = "docker compose -f $COMPOSE_BASE -f $COMPOSE_OBS down"
+
+[tasks."obs:status"]
+description = "Show status of all running containers"
+run = "docker compose -f $COMPOSE_BASE -f $COMPOSE_OBS ps"
+
+[tasks."obs:logs"]
+description = "Follow logs of observability collectors (Alloy, OBI, LGTM)"
+run = "docker compose -f $COMPOSE_BASE -f $COMPOSE_OBS logs -f alloy obi otel-lgtm"
+
+[tasks."obs:verify"]
+description = "Smoke test observability endpoints"
+run = '''
+echo "Checking Grafana..." && curl -fsS -o /dev/null -w "Grafana HTTP %{http_code}\n" http://localhost:3000
+echo "Checking Alloy..."   && curl -fsS -o /dev/null -w "Alloy HTTP %{http_code}\n" http://localhost:12345/-/ready
+echo "Checking Prometheus..." && curl -fsS "http://localhost:3000/api/datasources/proxy/uid/prometheus/api/v1/query?query=up" | grep -q '"status":"success"' && echo "Prometheus query OK"
+'''
